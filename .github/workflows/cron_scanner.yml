@@ -1,10 +1,9 @@
 name: Bybit MACD Super Hourly Scanner
 
 on:
-  schedule:
-    # Chạy tự động vào phút thứ 0 của mỗi giờ (1h00, 2h00, 3h00...)
-    - cron: '0 * * * *'
-  workflow_dispatch: # Cho phép kích hoạt chạy thử thủ công bất kỳ lúc nào
+  repository_dispatch:
+    types: [trigger-scan]
+  workflow_dispatch:
 
 jobs:
   scan:
