@@ -16,9 +16,6 @@ if (currentUTCHour % 8 === 0 || isManualRun) {
     TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
 }
 
-// CHỈ CẢNH BÁO TÍN HIỆU MỚI (Cách tối đa 1 nến: nến 0 hoặc nến 1)
-const MAX_AGO = 1; 
-
 // =========================================================================
 // 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
 // =========================================================================
@@ -156,14 +153,15 @@ function checkStrictDivergence(rawList) {
         }
     }
 
-    if (lastSignalAgo >= 0 && lastSignalAgo <= MAX_AGO) {
+    // CHỈ LỌC TÍN HIỆU VỪA ĐÓNG NẾN (CÁCH ĐÚNG 1 NẾN)
+    if (lastSignalAgo === 1) {
         return { found: true, candlesAgo: lastSignalAgo };
     }
     return { found: false };
 }
 
 // =========================================================================
-// 5. LỌC FULL DANH SÁCH COIN FUTURES (TRỰC TIẾP TỪ CONTRACT API)
+// 5. LỌC FULL DANH SÁCH COIN FUTURES
 // =========================================================================
 async function getTopFuturesSymbols() {
     let symbols = [];
@@ -174,14 +172,13 @@ async function getTopFuturesSymbols() {
         let json = await res.json();
 
         if (json.success && json.data) {
-            // Lấy Top 480 hợp đồng USDT Futures có Volume 24h lớn nhất
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
                 .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
                 .slice(0, 480);
 
             futuresList.forEach(item => {
-                let cleanSym = item.symbol.replace('_', ''); // Chuyển BTC_USDT -> BTCUSDT
+                let cleanSym = item.symbol.replace('_', '');
                 symbols.push(cleanSym);
 
                 let changePct = parseFloat(item.riseFallRate || 0) * 100;
@@ -251,7 +248,8 @@ async function runScanner() {
         if (matchedList.length > 0) {
             console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
 
-            let msg = `🚀 <b>CẢNH BÁO MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
+            // ĐỔI TIÊU ĐỀ THÀNH "TÍN HIỆU"
+            let msg = `🚀 <b>TÍN HIỆU MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
             matchedList.forEach(item => {
                 let cleanSymbol = item.symbol.replace('USDT', ''); 
                 
@@ -259,7 +257,7 @@ async function runScanner() {
                 let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
                 let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
                 
-                let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách 1 nến (Vừa đóng)`;
+                let agoStr = `Cách 1 nến (Vừa đóng)`;
                 
                 msg += `📌 <b>${item.symbol}</b>\n`;
                 msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
