@@ -1,0 +1,25 @@
+name: Bybit MACD Super Hourly Scanner
+
+on:
+  schedule:
+    # Chạy tự động vào phút thứ 0 của mỗi giờ (1h00, 2h00, 3h00...)
+    - cron: '0 * * * *'
+  workflow_dispatch: # Cho phép kích hoạt chạy thử thủ công bất kỳ lúc nào
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Cai dat Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Chay Script Quet MACD
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node scanner.js
