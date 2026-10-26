@@ -7,16 +7,18 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
+// Các khung thời gian chuẩn của API MEXC V3
 const TIMEFRAMES = [
-    { label: '1H', mexcTf: '60m', binanceTf: '1h' },
-    { label: '4H', mexcTf: '4h', binanceTf: '4h' }
+    { label: '1H', tf: '60m' },
+    { label: '4H', tf: '4h' }
 ];
 
+// Khung 1D tự động chạy mỗi 8 tiếng
 if (currentUTCHour % 8 === 0 || isManualRun) {
-    TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
+    TIMEFRAMES.push({ label: '1D', tf: '1d' });
 }
 
-// CHỈ CẢNH BÁO TÍN HIỆU MỚI (Cách 0 - 1 nến)
+// CHỈ CẢNH BÁO TÍN HIỆU MỚI (Cách tối đa 1 nến: nến 0 hoặc nến 1)
 const MAX_AGO = 1; 
 
 // =========================================================================
@@ -163,110 +165,97 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. LẤY CHÍNH XÁC DANH SÁCH ~500 CẶP FUTURES TRÊN BYBIT QUA PROXY
+// 5. LỌC DANH SÁCH COIN CHUẨN FUTURES (KHÔNG DÍNH SPOT)
 // =========================================================================
-async function getBybitExactSymbols() {
-    const url = 'https://api.bybit.com/v5/market/instruments-info?category=linear';
+async function getTopFuturesSymbols() {
     let symbols = [];
-
-    // Proxy 1 (AllOrigins)
-    try {
-        let res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
-        let data = await res.json();
-        let parsed = JSON.parse(data.contents);
-        symbols = parsed.result.list.filter(s => s.quoteCoin === 'USDT' && s.status === 'Trading').map(s => s.symbol);
-        if (symbols.length > 0) return symbols;
-    } catch(e) {}
-
-    // Proxy 2 (CodeTabs)
-    try {
-        let res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`);
-        let parsed = await res.json();
-        symbols = parsed.result.list.filter(s => s.quoteCoin === 'USDT' && s.status === 'Trading').map(s => s.symbol);
-        if (symbols.length > 0) return symbols;
-    } catch(e) {}
-
-    return [];
-}
-
-async function getTickers() {
-    let map = {};
-    try {
-        let res = await fetch('https://data-api.binance.vision/api/v3/ticker/24hr');
-        let data = await res.json();
-        if (Array.isArray(data)) data.forEach(t => { map[t.symbol] = t; });
-    } catch(e) {}
+    let tickerMap = {};
     
     try {
-        let res = await fetch('https://api.mexc.com/api/v3/ticker/24hr');
-        let data = await res.json();
-        if (Array.isArray(data)) data.forEach(t => { if(!map[t.symbol]) map[t.symbol] = t; });
-    } catch(e) {}
+        // 5.1. Gọi API Hợp đồng Tương lai (Futures) để lấy danh sách loại bỏ 100% coin Spot
+        let res = await fetch('https://contract.mexc.com/api/v1/contract/ticker');
+        let json = await res.json();
+
+        if (json.success && json.data) {
+            // Lọc mã USDT và sắp xếp theo Volume giảm dần, lấy Top 450 cặp (bằng số lượng Bybit)
+            let futuresList = json.data
+                .filter(item => item.symbol.endsWith('_USDT'))
+                .sort((a, b) => parseFloat(b.volume24) - parseFloat(a.volume24))
+                .slice(0, 450);
+
+            let futuresSymbols = futuresList.map(item => item.symbol.replace('_', ''));
+
+            // 5.2. Lấy giá và phần trăm thay đổi từ API v3
+            let tickerRes = await fetch('https://api.mexc.com/api/v3/ticker/24hr');
+            let tickerData = await tickerRes.json();
+            
+            let allTickers = {};
+            if (Array.isArray(tickerData)) {
+                tickerData.forEach(t => { allTickers[t.symbol] = t; });
+            }
+
+            // Kết hợp dữ liệu
+            futuresSymbols.forEach(sym => {
+                if (allTickers[sym]) {
+                    symbols.push(sym);
+                    tickerMap[sym] = {
+                        price: parseFloat(allTickers[sym].lastPrice),
+                        change: parseFloat(allTickers[sym].priceChangePercent)
+                    };
+                }
+            });
+        }
+    } catch(e) {
+        console.error('Lỗi khi lấy danh sách Futures:', e);
+    }
     
-    return map;
-}
-
-async function getKlines(symbol, timeItem) {
-    try {
-        let res = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${timeItem.binanceTf}&limit=1000`);
-        if (res.ok) {
-            let data = await res.json();
-            if (Array.isArray(data) && data.length > 100) return data;
-        }
-    } catch(e) {}
-
-    try {
-        let res = await fetch(`https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${timeItem.mexcTf}&limit=1000`);
-        if (res.ok) {
-            let data = await res.json();
-            if (Array.isArray(data) && data.length > 100) return data;
-        }
-    } catch(e) {}
-
-    return null;
+    return { symbols, tickerMap };
 }
 
 // =========================================================================
-// 6. QUY TRÌNH CHẠY QUÉT
+// 6. QUY TRÌNH CHẠY QUÉT REALTIME
 // =========================================================================
 async function runScanner() {
     console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường...`);
     
-    // 1. Lấy đúng danh sách ~500 mã của Bybit Futures
-    let symbols = await getBybitExactSymbols();
+    let { symbols, tickerMap } = await getTopFuturesSymbols();
+    
     if (symbols.length === 0) {
-        console.error('Lỗi: Không lấy được danh sách Bybit qua Proxy!');
+        console.error('Lỗi: Không tải được danh sách cặp tiền!');
         return;
     }
-    console.log(`Đã nạp chính xác ${symbols.length} cặp USDT từ Bybit Futures.`);
+    console.log(`Đã nạp thành công TOP ${symbols.length} cặp Futures có thanh khoản cao nhất.`);
 
-    let tickerMap = await getTickers();
-
-    // 2. Quét biểu đồ
     for (let timeItem of TIMEFRAMES) {
         console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
         let matchedList = [];
 
         for (let symbol of symbols) {
-            let klines = await getKlines(symbol, timeItem);
-            if (klines) {
-                let result = checkStrictDivergence(klines);
-                if (result.found) {
-                    let price = parseFloat(tickerMap[symbol]?.lastPrice || 0);
-                    let change = parseFloat(tickerMap[symbol]?.priceChangePercent || 0);
-                    
-                    matchedList.push({
-                        symbol: symbol,
-                        price: price,
-                        change: change,
-                        candlesAgo: result.candlesAgo
-                    });
+            try {
+                let res = await fetch(`https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${timeItem.tf}&limit=1000`);
+                if (res.ok) {
+                    let klines = await res.json();
+                    if (Array.isArray(klines) && klines.length > 100) {
+                        let result = checkStrictDivergence(klines);
+                        if (result.found) {
+                            let price = tickerMap[symbol]?.price || 0;
+                            let change = tickerMap[symbol]?.change || 0;
+                            
+                            matchedList.push({
+                                symbol: symbol,
+                                price: price,
+                                change: change,
+                                candlesAgo: result.candlesAgo
+                            });
+                        }
+                    }
                 }
-            }
-            await new Promise(r => setTimeout(r, 15)); // Nghỉ nhẹ tránh bị limit
+            } catch (err) {}
+
+            // Chờ 15ms giữa các mã để tránh bị khoá kết nối
+            await new Promise(r => setTimeout(r, 15)); 
         }
 
-        // 3. Báo cáo Telegram
         if (matchedList.length > 0) {
             console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
             
@@ -275,7 +264,7 @@ async function runScanner() {
                 let cleanSymbol = item.symbol.replace('USDT', ''); 
                 let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
                 let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
-                let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách ${item.candlesAgo} nến`;
+                let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách 1 nến (Vừa đóng)`;
                 
                 msg += `📌 <b>${item.symbol}</b>\n`;
                 msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
