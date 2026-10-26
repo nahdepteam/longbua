@@ -7,12 +7,18 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
+// 1H: Chạy mỗi giờ
 const TIMEFRAMES = [
-    { label: '1H', mexcTf: '60m', binanceTf: '1h' },
-    { label: '4H', mexcTf: '4h', binanceTf: '4h' }
+    { label: '1H', mexcTf: '60m', binanceTf: '1h' }
 ];
 
-if (currentUTCHour % 8 === 0 || isManualRun) {
+// 4H: Chạy vào các mốc 03:30, 07:30, 11:30, 15:30, 19:30, 23:30 (Giờ VN)
+if (currentUTCHour % 4 === 0 || isManualRun) {
+    TIMEFRAMES.push({ label: '4H', mexcTf: '4h', binanceTf: '4h' });
+}
+
+// 1D: Chạy vào các mốc 07:30 và 15:30 (Giờ VN)
+if (currentUTCHour === 0 || currentUTCHour === 8 || isManualRun) {
     TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
 }
 
@@ -256,7 +262,6 @@ async function runScanner() {
                 let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
                 let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
                 
-                // HIỂN THỊ RÕ TRẠNG THÁI NẾN LIVE HOẶC VỪA ĐÓNG
                 let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : 'Cách 1 nến (Vừa đóng)';
                 
                 msg += `📌 <b>${item.symbol}</b>\n`;
