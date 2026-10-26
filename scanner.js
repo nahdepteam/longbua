@@ -17,8 +17,8 @@ if (currentUTCHour % 4 === 0 || isManualRun) {
     TIMEFRAMES.push({ label: '4H', mexcTf: '4h', binanceTf: '4h' });
 }
 
-// 1D: Chạy vào các mốc 07:30 và 15:30 (Giờ VN)
-if (currentUTCHour === 0 || currentUTCHour === 8 || isManualRun) {
+// 1D: Chạy vào các mốc 07:30, 15:30 và 23:30 (Giờ VN)
+if (currentUTCHour % 8 === 0 || isManualRun) {
     TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
 }
 
