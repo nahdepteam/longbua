@@ -1,12 +1,23 @@
 // =========================================================================
-// 1. ĐỌC TOKEN VÀ CHAT ID TỪ BIẾN MÔI TRƯỜNG (BẢO MẬT)
+// 1. ĐỌC TOKEN, CHAT ID & TỰ ĐỘNG PHÂN LỊCH CHẠY THEO GIỜ
 // =========================================================================
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// Cấu hình khung thời gian quét: '60' (1H), '240' (4H), 'D' (1D)
-const TIMEFRAME = '60'; 
-const TF_LABEL = '1H';
+// Kiểm tra giờ UTC hiện tại và sự kiện kích hoạt
+const currentUTCHour = new Date().getUTCHours();
+const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
+
+// Khung 1H và 4H chạy cố định mỗi giờ
+const TIMEFRAMES = [
+    { tf: '60', label: '1H' },
+    { tf: '240', label: '4H' }
+];
+
+// Khung 1D tự động chạy mỗi 8 tiếng (vào 0h, 8h, 16h UTC) hoặc khi bấm Test thủ công
+if (currentUTCHour % 8 === 0 || isManualRun) {
+    TIMEFRAMES.push({ tf: 'D', label: '1D' });
+}
 
 // Khoảng cách nến tối đa để phát cảnh báo (0 = nến hiện tại, 1 = nến vừa đóng)
 const MAX_AGO = 1; 
@@ -165,10 +176,11 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. QUY TRÌNH CHẠY QUÉT VÀ GỬI BÁO CÁO
+// 5. QUY TRÌNH CHẠY QUÉT VÀ GỬI BÁO CÁO MULTI-TIMEFRAME
 // =========================================================================
 async function runScanner() {
-    console.log(`[${new Date().toLocaleString('vi-VN')}] Đang quét thị trường Bybit Futures...`);
+    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường Bybit...`);
+    console.log(`Các khung quét đợt này: ${TIMEFRAMES.map(t => t.label).join(', ')}`);
     
     try {
         let res = await fetch('https://api.bybit.com/v5/market/instruments-info?category=linear');
@@ -182,54 +194,56 @@ async function runScanner() {
             .filter(item => item.quoteCoin === 'USDT' && item.status === 'Trading')
             .map(item => item.symbol);
 
-        console.log(`Tổng số cặp cần phân tích: ${symbols.length}`);
-        let matchedList = [];
+        for (let timeItem of TIMEFRAMES) {
+            console.log(`\n--- Đang quét Khung ${timeItem.label} (${symbols.length} cặp) ---`);
+            let matchedList = [];
 
-        for (let i = 0; i < symbols.length; i++) {
-            let symbol = symbols[i];
-            try {
-                let [tickerRes, klineRes] = await Promise.all([
-                    fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`).then(r => r.json()),
-                    fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${TIMEFRAME}&limit=1000`).then(r => r.json())
-                ]);
+            for (let i = 0; i < symbols.length; i++) {
+                let symbol = symbols[i];
+                try {
+                    let [tickerRes, klineRes] = await Promise.all([
+                        fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`).then(r => r.json()),
+                        fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`).then(r => r.json())
+                    ]);
 
-                let price = parseFloat(tickerRes.result?.list[0]?.lastPrice || 0);
-                let change = parseFloat(tickerRes.result?.list[0]?.price24hPcnt || 0) * 100;
+                    let price = parseFloat(tickerRes.result?.list[0]?.lastPrice || 0);
+                    let change = parseFloat(tickerRes.result?.list[0]?.price24hPcnt || 0) * 100;
 
-                if (klineRes.result && klineRes.result.list) {
-                    let result = checkStrictDivergence(klineRes.result.list);
-                    if (result.found) {
-                        matchedList.push({
-                            symbol: symbol,
-                            price: price,
-                            change: change,
-                            candlesAgo: result.candlesAgo
-                        });
+                    if (klineRes.result && klineRes.result.list) {
+                        let result = checkStrictDivergence(klineRes.result.list);
+                        if (result.found) {
+                            matchedList.push({
+                                symbol: symbol,
+                                price: price,
+                                change: change,
+                                candlesAgo: result.candlesAgo
+                            });
+                        }
                     }
-                }
-            } catch (err) {}
+                } catch (err) {}
 
-            await new Promise(r => setTimeout(r, 10));
-        }
+                await new Promise(r => setTimeout(r, 10));
+            }
 
-        if (matchedList.length > 0) {
-            console.log(`=> Tìm thấy ${matchedList.length} cặp thỏa mãn. Đang gửi Telegram...`);
-            
-            let msg = `🚀 <b>CẢNH BÁO MACD SUPER 3 ĐÁY [Khung ${TF_LABEL}]</b>\n\n`;
-            matchedList.forEach(item => {
-                let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${item.symbol}.P`;
-                let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${item.symbol}.P`;
-                let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách ${item.candlesAgo} nến`;
+            if (matchedList.length > 0) {
+                console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
                 
-                msg += `📌 <b>${item.symbol}.P</b>\n`;
-                msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
-                msg += `• Trạng thái: ${agoStr}\n`;
-                msg += `• Xem Chart: <a href="${tvBybit}">Bybit</a> | <a href="${tvMexc}">MEXC</a>\n\n`;
-            });
+                let msg = `🚀 <b>CẢNH BÁO MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
+                matchedList.forEach(item => {
+                    let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${item.symbol}.P`;
+                    let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${item.symbol}.P`;
+                    let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách ${item.candlesAgo} nến`;
+                    
+                    msg += `📌 <b>${item.symbol}.P</b>\n`;
+                    msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
+                    msg += `• Trạng thái: ${agoStr}\n`;
+                    msg += `• Xem Chart: <a href="${tvBybit}">Bybit</a> | <a href="${tvMexc}">MEXC</a>\n\n`;
+                });
 
-            await sendTelegramMessage(msg);
-        } else {
-            console.log('=> Hoàn tất quét. Không có cặp nào thỏa mãn.');
+                await sendTelegramMessage(msg);
+            } else {
+                console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
+            }
         }
 
     } catch (error) {
