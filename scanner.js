@@ -4,23 +4,23 @@
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// Kiểm tra giờ UTC hiện tại và sự kiện kích hoạt
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
-// Khung 1H và 4H chạy cố định mỗi giờ
 const TIMEFRAMES = [
     { tf: '60', label: '1H' },
     { tf: '240', label: '4H' }
 ];
 
-// Khung 1D tự động chạy mỗi 8 tiếng (vào 0h, 8h, 16h UTC) hoặc khi bấm Test thủ công
 if (currentUTCHour % 8 === 0 || isManualRun) {
     TIMEFRAMES.push({ tf: 'D', label: '1D' });
 }
 
-// Khoảng cách nến tối đa để phát cảnh báo (0 = nến hiện tại, 1 = nến vừa đóng)
-const MAX_AGO = 5; 
+const MAX_AGO = 10; // Đã đổi thành 10 nến giống như cài đặt trên HTML
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json'
+};
 
 // =========================================================================
 // 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
@@ -183,8 +183,16 @@ async function runScanner() {
     console.log(`Các khung quét đợt này: ${TIMEFRAMES.map(t => t.label).join(', ')}`);
     
     try {
-        let res = await fetch('https://api.bybit.com/v5/market/instruments-info?category=linear');
-        let data = await res.json();
+        let res = await fetch('https://api.bybit.com/v5/market/instruments-info?category=linear', { headers: HEADERS });
+        let textRes = await res.text();
+        let data;
+        try {
+            data = JSON.parse(textRes);
+        } catch(e) {
+            console.error('Không thể đọc JSON từ API Bybit. Phản hồi thực tế:', textRes.substring(0, 200));
+            return;
+        }
+
         if (!data.result || !data.result.list) {
             console.error('Không lấy được danh sách hợp đồng!');
             return;
@@ -202,8 +210,8 @@ async function runScanner() {
                 let symbol = symbols[i];
                 try {
                     let [tickerRes, klineRes] = await Promise.all([
-                        fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`).then(r => r.json()),
-                        fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`).then(r => r.json())
+                        fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`, { headers: HEADERS }).then(r => r.json()),
+                        fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`, { headers: HEADERS }).then(r => r.json())
                     ]);
 
                     let price = parseFloat(tickerRes.result?.list[0]?.lastPrice || 0);
@@ -222,7 +230,7 @@ async function runScanner() {
                     }
                 } catch (err) {}
 
-                await new Promise(r => setTimeout(r, 10));
+                await new Promise(r => setTimeout(r, 20));
             }
 
             if (matchedList.length > 0) {
