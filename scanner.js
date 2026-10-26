@@ -17,15 +17,42 @@ if (currentUTCHour % 8 === 0 || isManualRun) {
 }
 
 const MAX_AGO = 10; 
-const BASE_URL = 'https://api.bytick.com'; // Sử dụng domain dự phòng của Bybit để tránh chặn IP server
-
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json'
 };
 
 // =========================================================================
-// 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
+// 2. HÀM FETCH BẢO VỆ VƯỢT RÀO CẢN IP (BYPASS GEO-BLOCK)
+// =========================================================================
+async function fetchBybit(pathAndQuery) {
+    const targetUrl = `https://api.bybit.com${pathAndQuery}`;
+    
+    // Thử qua Proxy 1: corsproxy.io
+    try {
+        const proxyUrl1 = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+        const res = await fetch(proxyUrl1, { headers: HEADERS });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.retCode === 0) return data;
+        }
+    } catch (e) {}
+
+    // Dự phòng Proxy 2: allorigins.win
+    try {
+        const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        const res = await fetch(proxyUrl2, { headers: HEADERS });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.retCode === 0) return data;
+        }
+    } catch (e) {}
+
+    return null;
+}
+
+// =========================================================================
+// 3. HÀM GỬI TIN NHẮN VỀ TELEGRAM
 // =========================================================================
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -55,7 +82,7 @@ async function sendTelegramMessage(text) {
 }
 
 // =========================================================================
-// 3. THUẬT TOÁN TÍNH EMA & MACD LINE
+// 4. THUẬT TOÁN TÍNH EMA & MACD LINE
 // =========================================================================
 function calcEMA(data, period) {
     let k = 2 / (period + 1);
@@ -79,7 +106,7 @@ function computeMACD(closes) {
 }
 
 // =========================================================================
-// 4. KIỂM TRA MÔ HÌNH BÁO ĐÁY CHUẨN MACD SUPER
+// 5. KIỂM TRA MÔ HÌNH BÁO ĐÁY CHUẨN MACD SUPER
 // =========================================================================
 function checkStrictDivergence(rawList) {
     if (!rawList || rawList.length < 150) return { found: false };
@@ -178,25 +205,16 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. QUY TRÌNH CHẠY QUÉT VÀ GỬI BÁO CÁO MULTI-TIMEFRAME
+// 6. QUY TRÌNH CHẠY QUÉT MULTI-TIMEFRAME
 // =========================================================================
 async function runScanner() {
     console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường Bybit...`);
     console.log(`Các khung quét đợt này: ${TIMEFRAMES.map(t => t.label).join(', ')}`);
     
     try {
-        let res = await fetch(`${BASE_URL}/v5/market/instruments-info?category=linear`, { headers: HEADERS });
-        let textRes = await res.text();
-        let data;
-        try {
-            data = JSON.parse(textRes);
-        } catch(e) {
-            console.error('Không thể đọc JSON từ API Bybit. Phản hồi thực tế:', textRes.substring(0, 200));
-            return;
-        }
-
-        if (!data.result || !data.result.list) {
-            console.error('Không lấy được danh sách hợp đồng!');
+        let data = await fetchBybit('/v5/market/instruments-info?category=linear');
+        if (!data || !data.result || !data.result.list) {
+            console.error('Không thể truy cập danh sách hợp đồng qua Proxy!');
             return;
         }
 
@@ -204,22 +222,24 @@ async function runScanner() {
             .filter(item => item.quoteCoin === 'USDT' && item.status === 'Trading')
             .map(item => item.symbol);
 
+        console.log(`Đã nạp thành công ${symbols.length} cặp hợp đồng USDT.`);
+
         for (let timeItem of TIMEFRAMES) {
-            console.log(`\n--- Đang quét Khung ${timeItem.label} (${symbols.length} cặp) ---`);
+            console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
             let matchedList = [];
 
             for (let i = 0; i < symbols.length; i++) {
                 let symbol = symbols[i];
                 try {
                     let [tickerRes, klineRes] = await Promise.all([
-                        fetch(`${BASE_URL}/v5/market/tickers?category=linear&symbol=${symbol}`, { headers: HEADERS }).then(r => r.json()),
-                        fetch(`${BASE_URL}/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`, { headers: HEADERS }).then(r => r.json())
+                        fetchBybit(`/v5/market/tickers?category=linear&symbol=${symbol}`),
+                        fetchBybit(`/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`)
                     ]);
 
-                    let price = parseFloat(tickerRes.result?.list[0]?.lastPrice || 0);
-                    let change = parseFloat(tickerRes.result?.list[0]?.price24hPcnt || 0) * 100;
+                    let price = parseFloat(tickerRes?.result?.list[0]?.lastPrice || 0);
+                    let change = parseFloat(tickerRes?.result?.list[0]?.price24hPcnt || 0) * 100;
 
-                    if (klineRes.result && klineRes.result.list) {
+                    if (klineRes && klineRes.result && klineRes.result.list) {
                         let result = checkStrictDivergence(klineRes.result.list);
                         if (result.found) {
                             matchedList.push({
@@ -232,7 +252,7 @@ async function runScanner() {
                     }
                 } catch (err) {}
 
-                await new Promise(r => setTimeout(r, 20));
+                await new Promise(r => setTimeout(r, 15));
             }
 
             if (matchedList.length > 0) {
