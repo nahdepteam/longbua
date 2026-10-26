@@ -153,8 +153,8 @@ function checkStrictDivergence(rawList) {
         }
     }
 
-    // CHỈ LỌC TÍN HIỆU VỪA ĐÓNG NẾN (CÁCH ĐÚNG 1 NẾN)
-    if (lastSignalAgo === 1) {
+    // NHẬN CẢ NẾN LIVE (0) VÀ NẾN VỪA ĐÓNG (1)
+    if (lastSignalAgo >= 0 && lastSignalAgo <= 1) {
         return { found: true, candlesAgo: lastSignalAgo };
     }
     return { found: false };
@@ -248,8 +248,7 @@ async function runScanner() {
         if (matchedList.length > 0) {
             console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
 
-            // ĐỔI TIÊU ĐỀ THÀNH "TÍN HIỆU"
-            let msg = `🚀 <b>TÍN HIỆU MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
+            let msg = `🚀 <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\n`;
             matchedList.forEach(item => {
                 let cleanSymbol = item.symbol.replace('USDT', ''); 
                 
@@ -257,7 +256,8 @@ async function runScanner() {
                 let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
                 let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
                 
-                let agoStr = `Cách 1 nến (Vừa đóng)`;
+                // HIỂN THỊ RÕ TRẠNG THÁI NẾN LIVE HOẶC VỪA ĐÓNG
+                let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : 'Cách 1 nến (Vừa đóng)';
                 
                 msg += `📌 <b>${item.symbol}</b>\n`;
                 msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
