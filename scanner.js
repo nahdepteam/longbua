@@ -20,7 +20,7 @@ if (currentUTCHour % 8 === 0 || isManualRun) {
 }
 
 // Khoảng cách nến tối đa để phát cảnh báo (0 = nến hiện tại, 1 = nến vừa đóng)
-const MAX_AGO = 1; 
+const MAX_AGO = 5; 
 
 // =========================================================================
 // 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
