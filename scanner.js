@@ -7,52 +7,20 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
+// Binance sử dụng ký hiệu '1h', '4h', '1d'
 const TIMEFRAMES = [
-    { tf: '60', label: '1H' },
-    { tf: '240', label: '4H' }
+    { tf: '1h', label: '1H' },
+    { tf: '4h', label: '4H' }
 ];
 
 if (currentUTCHour % 8 === 0 || isManualRun) {
-    TIMEFRAMES.push({ tf: 'D', label: '1D' });
+    TIMEFRAMES.push({ tf: '1d', label: '1D' });
 }
 
 const MAX_AGO = 10; 
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json'
-};
 
 // =========================================================================
-// 2. HÀM FETCH BẢO VỆ VƯỢT RÀO CẢN IP (BYPASS GEO-BLOCK)
-// =========================================================================
-async function fetchBybit(pathAndQuery) {
-    const targetUrl = `https://api.bybit.com${pathAndQuery}`;
-    
-    // Thử qua Proxy 1: corsproxy.io
-    try {
-        const proxyUrl1 = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-        const res = await fetch(proxyUrl1, { headers: HEADERS });
-        if (res.ok) {
-            const data = await res.json();
-            if (data && data.retCode === 0) return data;
-        }
-    } catch (e) {}
-
-    // Dự phòng Proxy 2: allorigins.win
-    try {
-        const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-        const res = await fetch(proxyUrl2, { headers: HEADERS });
-        if (res.ok) {
-            const data = await res.json();
-            if (data && data.retCode === 0) return data;
-        }
-    } catch (e) {}
-
-    return null;
-}
-
-// =========================================================================
-// 3. HÀM GỬI TIN NHẮN VỀ TELEGRAM
+// 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
 // =========================================================================
 async function sendTelegramMessage(text) {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -82,7 +50,7 @@ async function sendTelegramMessage(text) {
 }
 
 // =========================================================================
-// 4. THUẬT TOÁN TÍNH EMA & MACD LINE
+// 3. THUẬT TOÁN TÍNH EMA & MACD LINE
 // =========================================================================
 function calcEMA(data, period) {
     let k = 2 / (period + 1);
@@ -106,13 +74,14 @@ function computeMACD(closes) {
 }
 
 // =========================================================================
-// 5. KIỂM TRA MÔ HÌNH BÁO ĐÁY CHUẨN MACD SUPER
+// 4. KIỂM TRA MÔ HÌNH BÁO ĐÁY CHUẨN MACD SUPER
 // =========================================================================
 function checkStrictDivergence(rawList) {
     if (!rawList || rawList.length < 150) return { found: false };
 
-    let closes = rawList.map(item => parseFloat(item[4])).reverse();
-    let lows = rawList.map(item => parseFloat(item[3])).reverse();
+    // API Binance trả về nến theo thứ tự [Cũ nhất ... Mới nhất]
+    let closes = rawList.map(item => parseFloat(item[4]));
+    let lows = rawList.map(item => parseFloat(item[3]));
 
     let { macdLine, signalLine } = computeMACD(closes);
     let n = closes.length;
@@ -205,43 +174,45 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 6. QUY TRÌNH CHẠY QUÉT MULTI-TIMEFRAME
+// 5. QUY TRÌNH CHẠY QUÉT MULTI-TIMEFRAME (BINANCE API)
 // =========================================================================
 async function runScanner() {
-    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường Bybit...`);
+    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quét thị trường bằng dữ liệu Binance Futures...`);
     console.log(`Các khung quét đợt này: ${TIMEFRAMES.map(t => t.label).join(', ')}`);
     
     try {
-        let data = await fetchBybit('/v5/market/instruments-info?category=linear');
-        if (!data || !data.result || !data.result.list) {
-            console.error('Không thể truy cập danh sách hợp đồng qua Proxy!');
-            return;
-        }
-
-        let symbols = data.result.list
-            .filter(item => item.quoteCoin === 'USDT' && item.status === 'Trading')
-            .map(item => item.symbol);
+        // 1. Lấy danh sách hợp đồng Futures USDT
+        let exInfoRes = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
+        let exInfo = await exInfoRes.json();
+        
+        let symbols = exInfo.symbols
+            .filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING' && s.contractType === 'PERPETUAL')
+            .map(s => s.symbol);
 
         console.log(`Đã nạp thành công ${symbols.length} cặp hợp đồng USDT.`);
 
+        // 2. Lấy biến động giá 24h của TOÀN BỘ thị trường (Chỉ tốn 1 request siêu nhanh)
+        let tickerRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+        let tickers = await tickerRes.json();
+        let tickerMap = {};
+        tickers.forEach(t => { tickerMap[t.symbol] = t; });
+
+        // 3. Quét từng khung thời gian
         for (let timeItem of TIMEFRAMES) {
             console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
             let matchedList = [];
 
-            for (let i = 0; i < symbols.length; i++) {
-                let symbol = symbols[i];
+            for (let symbol of symbols) {
                 try {
-                    let [tickerRes, klineRes] = await Promise.all([
-                        fetchBybit(`/v5/market/tickers?category=linear&symbol=${symbol}`),
-                        fetchBybit(`/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`)
-                    ]);
+                    let klineRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${timeItem.tf}&limit=1000`);
+                    let klines = await klineRes.json();
 
-                    let price = parseFloat(tickerRes?.result?.list[0]?.lastPrice || 0);
-                    let change = parseFloat(tickerRes?.result?.list[0]?.price24hPcnt || 0) * 100;
-
-                    if (klineRes && klineRes.result && klineRes.result.list) {
-                        let result = checkStrictDivergence(klineRes.result.list);
+                    if (klines && klines.length > 0) {
+                        let result = checkStrictDivergence(klines);
                         if (result.found) {
+                            let price = parseFloat(tickerMap[symbol]?.lastPrice || 0);
+                            let change = parseFloat(tickerMap[symbol]?.priceChangePercent || 0);
+                            
                             matchedList.push({
                                 symbol: symbol,
                                 price: price,
@@ -252,22 +223,26 @@ async function runScanner() {
                     }
                 } catch (err) {}
 
-                await new Promise(r => setTimeout(r, 15));
+                // Tránh bị Binance chặn vì gọi quá nhanh
+                await new Promise(r => setTimeout(r, 50));
             }
 
+            // 4. Gửi báo cáo Telegram
             if (matchedList.length > 0) {
                 console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
                 
                 let msg = `🚀 <b>CẢNH BÁO MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
                 matchedList.forEach(item => {
-                    let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${item.symbol}.P`;
-                    let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${item.symbol}.P`;
+                    let cleanSymbol = item.symbol.replace('USDT', ''); // Lọc chữ USDT để ghép link
+                    let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
+                    let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${cleanSymbol}USDT.P`;
+                    let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
                     let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách ${item.candlesAgo} nến`;
                     
-                    msg += `📌 <b>${item.symbol}.P</b>\n`;
+                    msg += `📌 <b>${item.symbol}</b>\n`;
                     msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
                     msg += `• Trạng thái: ${agoStr}\n`;
-                    msg += `• Xem Chart: <a href="${tvBybit}">Bybit</a> | <a href="${tvMexc}">MEXC</a>\n\n`;
+                    msg += `• Chart: <a href="${tvBybit}">Bybit</a> | <a href="${tvBinance}">Binance</a> | <a href="${tvMexc}">MEXC</a>\n\n`;
                 });
 
                 await sendTelegramMessage(msg);
