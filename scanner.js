@@ -7,14 +7,13 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
-// Binance sử dụng ký hiệu '1h', '4h', '1d'
 const TIMEFRAMES = [
-    { tf: '1h', label: '1H' },
-    { tf: '4h', label: '4H' }
+    { label: '1H', mexcTf: '60m', binanceTf: '1h' },
+    { label: '4H', mexcTf: '4h', binanceTf: '4h' }
 ];
 
 if (currentUTCHour % 8 === 0 || isManualRun) {
-    TIMEFRAMES.push({ tf: '1d', label: '1D' });
+    TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
 }
 
 const MAX_AGO = 10; 
@@ -23,14 +22,10 @@ const MAX_AGO = 10;
 // 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
 // =========================================================================
 async function sendTelegramMessage(text) {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-        console.error('Lỗi: Chưa cấu hình TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID!');
-        return;
-    }
-
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     try {
-        const response = await fetch(url, {
+        await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -40,13 +35,7 @@ async function sendTelegramMessage(text) {
                 disable_web_page_preview: true
             })
         });
-        const resData = await response.json();
-        if (!resData.ok) {
-            console.error('Lỗi API Telegram:', resData.description);
-        }
-    } catch (e) {
-        console.error('Lỗi kết nối khi gửi Telegram:', e.message);
-    }
+    } catch (e) {}
 }
 
 // =========================================================================
@@ -79,7 +68,7 @@ function computeMACD(closes) {
 function checkStrictDivergence(rawList) {
     if (!rawList || rawList.length < 150) return { found: false };
 
-    // API Binance trả về nến theo thứ tự [Cũ nhất ... Mới nhất]
+    // API trả về nến [Cũ nhất ... Mới nhất]
     let closes = rawList.map(item => parseFloat(item[4]));
     let lows = rawList.map(item => parseFloat(item[3]));
 
@@ -174,85 +163,113 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. QUY TRÌNH CHẠY QUÉT MULTI-TIMEFRAME (BINANCE API)
+// 5. FETCH API BẤT TỬ (TỰ ĐỘNG CHUYỂN ĐỔI API NẾU LỖI)
 // =========================================================================
-async function runScanner() {
-    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quét thị trường bằng dữ liệu Binance Futures...`);
-    console.log(`Các khung quét đợt này: ${TIMEFRAMES.map(t => t.label).join(', ')}`);
+async function getSymbols() {
+    try {
+        let res = await fetch('https://api.mexc.com/api/v3/exchangeInfo');
+        let data = await res.json();
+        if (data && data.symbols) return data.symbols.filter(s => s.quoteAsset === 'USDT').map(s => s.symbol);
+    } catch(e) {}
     
     try {
-        // 1. Lấy danh sách hợp đồng Futures USDT
-        let exInfoRes = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
-        let exInfo = await exInfoRes.json();
-        
-        let symbols = exInfo.symbols
-            .filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING' && s.contractType === 'PERPETUAL')
-            .map(s => s.symbol);
+        let res = await fetch('https://data-api.binance.vision/api/v3/exchangeInfo');
+        let data = await res.json();
+        if (data && data.symbols) return data.symbols.filter(s => s.quoteAsset === 'USDT').map(s => s.symbol);
+    } catch(e) {}
+    return [];
+}
 
-        console.log(`Đã nạp thành công ${symbols.length} cặp hợp đồng USDT.`);
+async function getTickers() {
+    let map = {};
+    try {
+        let res = await fetch('https://api.mexc.com/api/v3/ticker/24hr');
+        let data = await res.json();
+        if (Array.isArray(data)) { data.forEach(t => { map[t.symbol] = t; }); return map; }
+    } catch(e) {}
+    
+    try {
+        let res = await fetch('https://data-api.binance.vision/api/v3/ticker/24hr');
+        let data = await res.json();
+        if (Array.isArray(data)) { data.forEach(t => { map[t.symbol] = t; }); }
+    } catch(e) {}
+    return map;
+}
 
-        // 2. Lấy biến động giá 24h của TOÀN BỘ thị trường (Chỉ tốn 1 request siêu nhanh)
-        let tickerRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
-        let tickers = await tickerRes.json();
-        let tickerMap = {};
-        tickers.forEach(t => { tickerMap[t.symbol] = t; });
+async function getKlines(symbol, timeItem) {
+    try {
+        let res = await fetch(`https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${timeItem.mexcTf}&limit=1000`);
+        let data = await res.json();
+        if (Array.isArray(data) && data.length > 100) return data;
+    } catch(e) {}
 
-        // 3. Quét từng khung thời gian
-        for (let timeItem of TIMEFRAMES) {
-            console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
-            let matchedList = [];
+    try {
+        let res = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${timeItem.binanceTf}&limit=1000`);
+        let data = await res.json();
+        if (Array.isArray(data) && data.length > 100) return data;
+    } catch(e) {}
 
-            for (let symbol of symbols) {
-                try {
-                    let klineRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${timeItem.tf}&limit=1000`);
-                    let klines = await klineRes.json();
+    return null;
+}
 
-                    if (klines && klines.length > 0) {
-                        let result = checkStrictDivergence(klines);
-                        if (result.found) {
-                            let price = parseFloat(tickerMap[symbol]?.lastPrice || 0);
-                            let change = parseFloat(tickerMap[symbol]?.priceChangePercent || 0);
-                            
-                            matchedList.push({
-                                symbol: symbol,
-                                price: price,
-                                change: change,
-                                candlesAgo: result.candlesAgo
-                            });
-                        }
-                    }
-                } catch (err) {}
+// =========================================================================
+// 6. QUY TRÌNH CHẠY QUÉT MULTI-TIMEFRAME
+// =========================================================================
+async function runScanner() {
+    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường...`);
+    
+    let symbols = await getSymbols();
+    if (symbols.length === 0) {
+        console.error('Lỗi: Không thể tải danh sách coin!');
+        return;
+    }
+    console.log(`Đã nạp thành công ${symbols.length} cặp USDT.`);
 
-                // Tránh bị Binance chặn vì gọi quá nhanh
-                await new Promise(r => setTimeout(r, 50));
-            }
+    let tickerMap = await getTickers();
 
-            // 4. Gửi báo cáo Telegram
-            if (matchedList.length > 0) {
-                console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
-                
-                let msg = `🚀 <b>CẢNH BÁO MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
-                matchedList.forEach(item => {
-                    let cleanSymbol = item.symbol.replace('USDT', ''); // Lọc chữ USDT để ghép link
-                    let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
-                    let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${cleanSymbol}USDT.P`;
-                    let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
-                    let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách ${item.candlesAgo} nến`;
+    for (let timeItem of TIMEFRAMES) {
+        console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
+        let matchedList = [];
+
+        for (let symbol of symbols) {
+            let klines = await getKlines(symbol, timeItem);
+            if (klines) {
+                let result = checkStrictDivergence(klines);
+                if (result.found) {
+                    let price = parseFloat(tickerMap[symbol]?.lastPrice || 0);
+                    let change = parseFloat(tickerMap[symbol]?.priceChangePercent || 0);
                     
-                    msg += `📌 <b>${item.symbol}</b>\n`;
-                    msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
-                    msg += `• Trạng thái: ${agoStr}\n`;
-                    msg += `• Chart: <a href="${tvBybit}">Bybit</a> | <a href="${tvBinance}">Binance</a> | <a href="${tvMexc}">MEXC</a>\n\n`;
-                });
-
-                await sendTelegramMessage(msg);
-            } else {
-                console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
+                    matchedList.push({
+                        symbol: symbol,
+                        price: price,
+                        change: change,
+                        candlesAgo: result.candlesAgo
+                    });
+                }
             }
+            await new Promise(r => setTimeout(r, 20)); // Tránh bị chặn do quét quá nhanh
         }
 
-    } catch (error) {
-        console.error('Lỗi trong quá trình quét:', error);
+        if (matchedList.length > 0) {
+            console.log(`=> Khung ${timeItem.label}: Tìm thấy ${matchedList.length} cặp. Đang gửi Telegram...`);
+            
+            let msg = `🚀 <b>CẢNH BÁO MACD SUPER 3 ĐÁY [Khung ${timeItem.label}]</b>\n\n`;
+            matchedList.forEach(item => {
+                let cleanSymbol = item.symbol.replace('USDT', ''); 
+                let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
+                let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${cleanSymbol}USDT.P`;
+                let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : `Cách ${item.candlesAgo} nến`;
+                
+                msg += `📌 <b>${item.symbol}</b>\n`;
+                msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
+                msg += `• Trạng thái: ${agoStr}\n`;
+                msg += `• Chart: <a href="${tvBybit}">Bybit</a> | <a href="${tvMexc}">MEXC</a>\n\n`;
+            });
+
+            await sendTelegramMessage(msg);
+        } else {
+            console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
+        }
     }
 }
 
