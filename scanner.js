@@ -16,7 +16,9 @@ if (currentUTCHour % 8 === 0 || isManualRun) {
     TIMEFRAMES.push({ tf: 'D', label: '1D' });
 }
 
-const MAX_AGO = 10; // Đã đổi thành 10 nến giống như cài đặt trên HTML
+const MAX_AGO = 10; 
+const BASE_URL = 'https://api.bytick.com'; // Sử dụng domain dự phòng của Bybit để tránh chặn IP server
+
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json'
@@ -183,7 +185,7 @@ async function runScanner() {
     console.log(`Các khung quét đợt này: ${TIMEFRAMES.map(t => t.label).join(', ')}`);
     
     try {
-        let res = await fetch('https://api.bybit.com/v5/market/instruments-info?category=linear', { headers: HEADERS });
+        let res = await fetch(`${BASE_URL}/v5/market/instruments-info?category=linear`, { headers: HEADERS });
         let textRes = await res.text();
         let data;
         try {
@@ -210,8 +212,8 @@ async function runScanner() {
                 let symbol = symbols[i];
                 try {
                     let [tickerRes, klineRes] = await Promise.all([
-                        fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`, { headers: HEADERS }).then(r => r.json()),
-                        fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`, { headers: HEADERS }).then(r => r.json())
+                        fetch(`${BASE_URL}/v5/market/tickers?category=linear&symbol=${symbol}`, { headers: HEADERS }).then(r => r.json()),
+                        fetch(`${BASE_URL}/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeItem.tf}&limit=1000`, { headers: HEADERS }).then(r => r.json())
                     ]);
 
                     let price = parseFloat(tickerRes.result?.list[0]?.lastPrice || 0);
