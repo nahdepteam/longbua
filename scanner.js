@@ -167,7 +167,7 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. LỌC FULL DANH SÁCH COIN FUTURES (TOP 650 CẶP)
+// 5. LỌC FULL DANH SÁCH COIN FUTURES (TOP 550 CẶP)
 // =========================================================================
 async function getTopFuturesSymbols() {
     let symbols = [];
@@ -181,7 +181,7 @@ async function getTopFuturesSymbols() {
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
                 .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
-                .slice(0, 650); // CẤU HÌNH LẤY 650 CẶP THANH KHOẢN CAO NHẤT
+                .slice(0, 550); // CẤU HÌNH LẤY 550 CẶP THANH KHOẢN CAO NHẤT
 
             futuresList.forEach(item => {
                 let cleanSym = item.symbol.replace('_', '');
