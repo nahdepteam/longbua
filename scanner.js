@@ -39,7 +39,9 @@ async function sendTelegramMessage(text) {
                 disable_web_page_preview: true
             })
         });
-    } catch (e) {}
+    } catch (e) {
+        console.error('Lỗi gửi tin nhắn Telegram:', e);
+    }
 }
 
 // =========================================================================
@@ -175,13 +177,15 @@ async function getTopFuturesSymbols() {
     
     try {
         let res = await fetch('https://contract.mexc.com/api/v1/contract/ticker');
+        if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+        
         let json = await res.json();
 
-        if (json.success && json.data) {
+        if (json.success && json.data && Array.isArray(json.data)) {
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
                 .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
-                .slice(0, 550); // CẤU HÌNH LẤY 550 CẶP THANH KHOẢN CAO NHẤT
+                .slice(0, 550);
 
             futuresList.forEach(item => {
                 let cleanSym = item.symbol.replace('_', '');
@@ -228,7 +232,14 @@ async function runScanner() {
     console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường...`);
     
     let { symbols, tickerMap } = await getTopFuturesSymbols();
-    if (symbols.length === 0) return;
+    
+    // NẾU KHÔNG LẤY ĐƯỢC COIN HOẶC LỖI KẾT NỐI API -> GỬI THÔNG BÁO BÁO LỖI TELEGRAM
+    if (!symbols || symbols.length === 0) {
+        console.error('Lỗi: Không lấy được danh sách coin từ API.');
+        await sendTelegramMessage(`⚠️ <b>CẢNH BÁO LỖI KẾT NỐI API</b>\n\nKhông thể tải danh sách hợp đồng Futures từ sàn MEXC. Quy trình quét tạm thời không thể thực hiện.`);
+        return;
+    }
+
     console.log(`Đã nạp thành công TOP ${symbols.length} cặp Futures có thanh khoản cao nhất.`);
 
     for (let timeItem of TIMEFRAMES) {
@@ -273,6 +284,9 @@ async function runScanner() {
             await sendTelegramMessage(msg);
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
+            // GỬI TIN NHẮN THÔNG BÁO KHÔNG CÓ CẶP THỎA MÃN
+            let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp nào thỏa mãn điều kiện MACD Super 3 Đáy.`;
+            await sendTelegramMessage(emptyMsg);
         }
     }
 }
