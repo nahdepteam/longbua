@@ -233,7 +233,7 @@ async function runScanner() {
     
     let { symbols, tickerMap } = await getTopFuturesSymbols();
     
-    // NẾU KHÔNG LẤY ĐƯỢC COIN HOẶC LỖI KẾT NỐI API -> GỬI THÔNG BÁO BÁO LỖI TELEGRAM
+    // BÁO LỖI KẾT NỐI API NẾU KHÔNG LẤY ĐƯỢC DANH SÁCH COIN
     if (!symbols || symbols.length === 0) {
         console.error('Lỗi: Không lấy được danh sách coin từ API.');
         await sendTelegramMessage(`⚠️ <b>CẢNH BÁO LỖI KẾT NỐI API</b>\n\nKhông thể tải danh sách hợp đồng Futures từ sàn MEXC. Quy trình quét tạm thời không thể thực hiện.`);
@@ -284,8 +284,8 @@ async function runScanner() {
             await sendTelegramMessage(msg);
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
-            // GỬI TIN NHẮN THÔNG BÁO KHÔNG CÓ CẶP THỎA MÃN
-            let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp nào thỏa mãn điều kiện MACD Super 3 Đáy.`;
+            // THÔNG BÁO NGẮN GỌN KHI KHÔNG CÓ CẶP THỎA MÃN
+            let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
             await sendTelegramMessage(emptyMsg);
         }
     }
