@@ -284,9 +284,12 @@ async function runScanner() {
             await sendTelegramMessage(msg);
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
-            // THÔNG BÁO NGẮN GỌN KHI KHÔNG CÓ CẶP THỎA MÃN
-            let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
-            await sendTelegramMessage(emptyMsg);
+            
+            // CHỈ GỬI BÁO "KHÔNG CÓ CẶP THỎA MÃN" CHO KHUNG 1D
+            if (timeItem.label === '1D') {
+                let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
+                await sendTelegramMessage(emptyMsg);
+            }
         }
     }
 }
