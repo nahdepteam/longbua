@@ -12,13 +12,9 @@ const TIMEFRAMES = [
     { label: '1H', mexcTf: '60m', binanceTf: '1h' }
 ];
 
-// 4H: Chạy vào các mốc 03:30, 07:30, 11:30, 15:30, 19:30, 23:30 (Giờ VN)
+// 4H & 1D: Chạy cùng mốc khung 4H (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 Giờ VN)
 if (currentUTCHour % 4 === 0 || isManualRun) {
     TIMEFRAMES.push({ label: '4H', mexcTf: '4h', binanceTf: '4h' });
-}
-
-// 1D: Chạy vào các mốc 07:30, 15:30 và 23:30 (Giờ VN)
-if (currentUTCHour % 8 === 0 || isManualRun) {
     TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
 }
 
@@ -285,8 +281,8 @@ async function runScanner() {
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
             
-            // CHỈ GỬI BÁO "KHÔNG CÓ CẶP THỎA MÃN" CHO KHUNG 1D
-            if (timeItem.label === '1D') {
+            // GỬI BÁO "KHÔNG CÓ CẶP THỎA MÃN" CHO CẢ KHUNG 4H VÀ 1D
+            if (timeItem.label === '4H' || timeItem.label === '1D') {
                 let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
                 await sendTelegramMessage(emptyMsg);
             }
