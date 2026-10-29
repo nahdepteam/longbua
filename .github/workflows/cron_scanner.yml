@@ -1,25 +1,23 @@
-name: MACD Super Scanner
+name: Bybit MACD Super Hourly Scanner
 
 on:
-  schedule:
-    # Chạy mỗi giờ vào phút thứ 30 (ví dụ: 00:30, 01:30, 02:30...)
-    - cron: '30 * * * *'
-  workflow_dispatch: # Cho phép bấm chạy thủ công từ tab Actions
+  repository_dispatch:
+    types: [trigger-scan]
+  workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Cai dat Node.js
+        uses: actions/setup-node@v3
         with:
-          node-version: '20'
-          # Đã bỏ dòng "cache: 'npm'" để triệt tiêu bước "Adding to cache" và "Post Setup Node.js"
+          node-version: '18'
 
-      - name: Run Scanner Script
+      - name: Chay Script Quet MACD
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
