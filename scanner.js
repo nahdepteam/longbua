@@ -7,15 +7,18 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
-// 1H: Chạy mỗi giờ
+// Xác định các mốc giờ quy định (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 giờ VN)
+const isScheduledMilestoneHour = (currentUTCHour % 4 === 0) || isManualRun;
+
+// 1H & 4H: Chạy mỗi giờ
 const TIMEFRAMES = [
-    { label: '1H', mexcTf: '60m', binanceTf: '1h' }
+    { label: '1H', binanceTf: '1h' },
+    { label: '4H', binanceTf: '4h' }
 ];
 
-// 4H & 1D: Chạy cùng mốc khung 4H (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 Giờ VN)
-if (currentUTCHour % 4 === 0 || isManualRun) {
-    TIMEFRAMES.push({ label: '4H', mexcTf: '4h', binanceTf: '4h' });
-    TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
+// 1D: Chạy vào các mốc giờ quy định (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 Giờ VN)
+if (isScheduledMilestoneHour) {
+    TIMEFRAMES.push({ label: '1D', binanceTf: '1d' });
 }
 
 // =========================================================================
@@ -165,37 +168,36 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. LỌC FULL DANH SÁCH COIN FUTURES (TOP 750 CẶP)
+// 5. LẤY TẤT CẢ CẶP FUTURES USDT TỪ BINANCE
 // =========================================================================
 async function getTopFuturesSymbols() {
     let symbols = [];
     let tickerMap = {};
     
     try {
-        let res = await fetch('https://contract.mexc.com/api/v1/contract/ticker');
+        let res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
         if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
         
         let json = await res.json();
 
-        if (json.success && json.data && Array.isArray(json.data)) {
-            let futuresList = json.data
-                .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
-                .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
-                .slice(0, 750); // CẤU HÌNH LẤY 750 CẶP THANH KHOẢN CAO NHẤT
+        if (Array.isArray(json)) {
+            // LỌC TẤT CẢ CẶP GIAO DỊCH CHỦ THỂ USDT
+            let futuresList = json
+                .filter(item => item.symbol && item.symbol.endsWith('USDT'))
+                .sort((a, b) => parseFloat(b.quoteVolume || 0) - parseFloat(a.quoteVolume || 0));
 
             futuresList.forEach(item => {
-                let cleanSym = item.symbol.replace('_', '');
-                symbols.push(cleanSym);
+                symbols.push(item.symbol);
 
-                let changePct = parseFloat(item.riseFallRate || 0) * 100;
-                tickerMap[cleanSym] = {
+                let changePct = parseFloat(item.priceChangePercent || 0);
+                tickerMap[item.symbol] = {
                     price: parseFloat(item.lastPrice || 0),
                     change: isNaN(changePct) ? 0 : changePct
                 };
             });
         }
     } catch(e) {
-        console.error('Lỗi khi lấy danh sách Futures:', e);
+        console.error('Lỗi khi lấy danh sách Binance Futures:', e);
     }
     
     return { symbols, tickerMap };
@@ -203,7 +205,7 @@ async function getTopFuturesSymbols() {
 
 async function getKlines(symbol, timeItem) {
     try {
-        let res = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${timeItem.binanceTf}&limit=1000`);
+        let res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${timeItem.binanceTf}&limit=1000`);
         if (res.ok) {
             let data = await res.json();
             if (Array.isArray(data) && data.length > 100) return data;
@@ -211,7 +213,7 @@ async function getKlines(symbol, timeItem) {
     } catch(e) {}
 
     try {
-        let res = await fetch(`https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${timeItem.mexcTf}&limit=1000`);
+        let res = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${timeItem.binanceTf}&limit=1000`);
         if (res.ok) {
             let data = await res.json();
             if (Array.isArray(data) && data.length > 100) return data;
@@ -225,18 +227,18 @@ async function getKlines(symbol, timeItem) {
 // 6. QUY TRÌNH CHẠY QUÉT
 // =========================================================================
 async function runScanner() {
-    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường...`);
+    console.log(`[${new Date().toLocaleString('vi-VN')}] Bắt đầu quy trình quét thị trường Binance Futures...`);
     
     let { symbols, tickerMap } = await getTopFuturesSymbols();
     
     // BÁO LỖI KẾT NỐI API NẾU KHÔNG LẤY ĐƯỢC DANH SÁCH COIN
     if (!symbols || symbols.length === 0) {
-        console.error('Lỗi: Không lấy được danh sách coin từ API.');
-        await sendTelegramMessage(`⚠️ <b>CẢNH BÁO LỖI KẾT NỐI API</b>\n\nKhông thể tải danh sách hợp đồng Futures từ sàn MEXC. Quy trình quét tạm thời không thể thực hiện.`);
+        console.error('Lỗi: Không lấy được danh sách coin từ API Binance.');
+        await sendTelegramMessage(`⚠️ <b>CẢNH BÁO LỖI KẾT NỐI API</b>\n\nKhông thể tải danh sách hợp đồng Futures từ Binance. Quy trình quét tạm thời không thể thực hiện.`);
         return;
     }
 
-    console.log(`Đã nạp thành công TOP ${symbols.length} cặp Futures có thanh khoản cao nhất.`);
+    console.log(`Đã nạp thành công ${symbols.length} cặp Binance Futures.`);
 
     for (let timeItem of TIMEFRAMES) {
         console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
@@ -265,8 +267,8 @@ async function runScanner() {
             matchedList.forEach(item => {
                 let cleanSymbol = item.symbol.replace('USDT', ''); 
                 
-                let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${cleanSymbol}USDT.P`;
                 let tvBinance = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}USDT.P`;
+                let tvMexc = `https://www.tradingview.com/chart/?symbol=MEXC:${cleanSymbol}USDT.P`;
                 let tvBybit = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}USDT.P`;
                 
                 let agoStr = item.candlesAgo === 0 ? '⚡ Đúng nến hiện tại (Live)' : 'Cách 1 nến (Vừa đóng)';
@@ -274,15 +276,15 @@ async function runScanner() {
                 msg += `📌 <b>${item.symbol}</b>\n`;
                 msg += `• Giá: <code>$${item.price}</code> (${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%)\n`;
                 msg += `• Trạng thái: ${agoStr}\n`;
-                msg += `• Chart Futures: <a href="${tvMexc}">MEXC</a> | <a href="${tvBinance}">Binance</a> | <a href="${tvBybit}">Bybit</a>\n\n`;
+                msg += `• Chart Futures: <a href="${tvBinance}">Binance</a> | <a href="${tvMexc}">MEXC</a> | <a href="${tvBybit}">Bybit</a>\n\n`;
             });
 
             await sendTelegramMessage(msg);
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
             
-            // GỬI BÁO "KHÔNG CÓ CẶP THỎA MÃN" CHO CẢ KHUNG 4H VÀ 1D
-            if (timeItem.label === '4H' || timeItem.label === '1D') {
+            // CHỈ GỬI BÁO "KHÔNG CÓ CẶP THỎA MÃN" VÀO CÁC MỐC GIỜ QUY ĐỊNH HẸN TRƯỚC (CHO KHUNG 4H VÀ 1D)
+            if (isScheduledMilestoneHour && (timeItem.label === '4H' || timeItem.label === '1D')) {
                 let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
                 await sendTelegramMessage(emptyMsg);
             }
