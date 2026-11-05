@@ -22,6 +22,11 @@ if (isScheduledMilestoneHour) {
     TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
 }
 
+// 1W: Chạy mỗi ngày 1 lần vào lúc 07:30 Giờ VN (Tức là 00:30 UTC)
+if (currentUTCHour === 0 || isManualRun) {
+    TIMEFRAMES.push({ label: '1W', mexcTf: '1W', binanceTf: '1w' });
+}
+
 // =========================================================================
 // 2. HÀM GỬI TIN NHẮN VỀ TELEGRAM
 // =========================================================================
@@ -185,7 +190,7 @@ async function getTopFuturesSymbols() {
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
                 .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
-                .slice(0, 750);
+                .slice(0, 750); // LẤY TOP 750 CẶP THANH KHOẢN CAO NHẤT
 
             futuresList.forEach(item => {
                 let cleanSym = item.symbol.replace('_', '');
@@ -285,8 +290,8 @@ async function runScanner() {
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
             
-            // CHỈ GỬI BÁO "KHÔNG CÓ CẶP THỎA MÃN" VÀO CÁC MỐC GIỜ QUY ĐỊNH CHO KHUNG 4H VÀ 1D
-            if (isScheduledMilestoneHour && (timeItem.label === '4H' || timeItem.label === '1D')) {
+            // LUÔN BÁO CHO KHUNG 1W, HOẶC BÁO CHO 4H/1D VÀO CÁC MỐC GIỜ QUY ĐỊNH
+            if (timeItem.label === '1W' || (isScheduledMilestoneHour && (timeItem.label === '4H' || timeItem.label === '1D'))) {
                 let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
                 await sendTelegramMessage(emptyMsg);
             }
