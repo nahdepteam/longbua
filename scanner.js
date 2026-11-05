@@ -10,9 +10,10 @@ const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 // Xác định các mốc giờ quy định (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 giờ VN)
 const isScheduledMilestoneHour = (currentUTCHour % 4 === 0) || isManualRun;
 
-// 1H & 4H: Chạy mỗi giờ
+// 1H, 2H & 4H: Chạy mỗi giờ
 const TIMEFRAMES = [
     { label: '1H', mexcTf: '60m', binanceTf: '1h' },
+    { label: '2H', mexcTf: '120m', binanceTf: '2h' },
     { label: '4H', mexcTf: '4h', binanceTf: '4h' }
 ];
 
@@ -184,7 +185,7 @@ async function getTopFuturesSymbols() {
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
                 .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
-                .slice(0, 750); // LẤY TOP 750 CẶP THANH KHOẢN CAO NHẤT
+                .slice(0, 750);
 
             futuresList.forEach(item => {
                 let cleanSym = item.symbol.replace('_', '');
