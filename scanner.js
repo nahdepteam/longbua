@@ -174,7 +174,7 @@ function checkStrictDivergence(rawList) {
 }
 
 // =========================================================================
-// 5. LỌC FULL DANH SÁCH COIN FUTURES (TOP 750 CẶP MEXC)
+// 5. LỌC FULL DANH SÁCH COIN FUTURES (TOÀN BỘ CẶP MEXC)
 // =========================================================================
 async function getTopFuturesSymbols() {
     let symbols = [];
@@ -187,10 +187,10 @@ async function getTopFuturesSymbols() {
         let json = await res.json();
 
         if (json.success && json.data && Array.isArray(json.data)) {
+            // ĐÃ BỎ HÀM .slice() ĐỂ LẤY TOÀN BỘ CÁC CẶP FUTURES USDT
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
-                .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0))
-                .slice(0, 750); // LẤY TOP 750 CẶP THANH KHOẢN CAO NHẤT
+                .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0));
 
             futuresList.forEach(item => {
                 let cleanSym = item.symbol.replace('_', '');
@@ -245,7 +245,7 @@ async function runScanner() {
         return;
     }
 
-    console.log(`Đã nạp thành công TOP ${symbols.length} cặp MEXC Futures.`);
+    console.log(`Đã nạp thành công toàn bộ ${symbols.length} cặp MEXC Futures.`);
 
     for (let timeItem of TIMEFRAMES) {
         console.log(`\n--- Đang quét Khung ${timeItem.label} ---`);
