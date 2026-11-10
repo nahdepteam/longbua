@@ -7,23 +7,27 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const currentUTCHour = new Date().getUTCHours();
 const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
 
-// Xác định các mốc giờ quy định (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 giờ VN)
-const isScheduledMilestoneHour = (currentUTCHour % 4 === 0) || isManualRun;
+// LƯU Ý: Giờ VN = Giờ UTC + 7 (Action chạy vào phút thứ 30)
+// Các mốc 4H (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 VN) tương ứng với UTC là 20, 0, 4, 8, 12, 16
+const is4H_Milestone = (currentUTCHour % 4 === 0) || isManualRun;
 
-// 1H, 2H & 4H: Chạy mỗi giờ
+// Các mốc 1D & 1W (07:30, 23:30 VN) tương ứng với UTC là 0 và 16
+const is1D_1W_Milestone = (currentUTCHour === 0 || currentUTCHour === 16) || isManualRun;
+
+// 1H & 2H: Chạy mỗi giờ
 const TIMEFRAMES = [
     { label: '1H', mexcTf: '60m', binanceTf: '1h' },
-    { label: '2H', mexcTf: '120m', binanceTf: '2h' },
-    { label: '4H', mexcTf: '4h', binanceTf: '4h' }
+    { label: '2H', mexcTf: '120m', binanceTf: '2h' }
 ];
 
-// 1D: Chạy vào các mốc giờ quy định (03:30, 07:30, 11:30, 15:30, 19:30, 23:30 Giờ VN)
-if (isScheduledMilestoneHour) {
-    TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
+// 4H: Chạy vào các mốc 4H
+if (is4H_Milestone) {
+    TIMEFRAMES.push({ label: '4H', mexcTf: '4h', binanceTf: '4h' });
 }
 
-// 1W: Chạy mỗi ngày 1 lần vào lúc 07:30 Giờ VN (Tức là 00:30 UTC)
-if (currentUTCHour === 0 || isManualRun) {
+// 1D & 1W: Chạy vào các mốc 07:30 và 23:30
+if (is1D_1W_Milestone) {
+    TIMEFRAMES.push({ label: '1D', mexcTf: '1d', binanceTf: '1d' });
     TIMEFRAMES.push({ label: '1W', mexcTf: '1W', binanceTf: '1w' });
 }
 
@@ -187,7 +191,6 @@ async function getTopFuturesSymbols() {
         let json = await res.json();
 
         if (json.success && json.data && Array.isArray(json.data)) {
-            // ĐÃ BỎ HÀM .slice() ĐỂ LẤY TOÀN BỘ CÁC CẶP FUTURES USDT
             let futuresList = json.data
                 .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
                 .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0));
@@ -290,8 +293,8 @@ async function runScanner() {
         } else {
             console.log(`=> Khung ${timeItem.label}: Không có cặp nào thỏa mãn.`);
             
-            // LUÔN BÁO CHO KHUNG 1W, HOẶC BÁO CHO 4H/1D VÀO CÁC MỐC GIỜ QUY ĐỊNH
-            if (timeItem.label === '1W' || (isScheduledMilestoneHour && (timeItem.label === '4H' || timeItem.label === '1D'))) {
+            // LUÔN BÁO KHÔNG CÓ KẾT QUẢ CHO CÁC KHUNG 4H, 1D, 1W
+            if (timeItem.label === '4H' || timeItem.label === '1D' || timeItem.label === '1W') {
                 let emptyMsg = `ℹ️ <b>TÍN HIỆU [Khung ${timeItem.label}]</b>\n\nKhông có cặp thoả mãn`;
                 await sendTelegramMessage(emptyMsg);
             }
